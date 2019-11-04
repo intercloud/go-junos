@@ -1,4 +1,4 @@
-module github.com/scottdware/go-junos
+module github.com/intercloud/go-junos
 
 go 1.12
 
