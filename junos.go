@@ -122,6 +122,10 @@ type commitResults struct {
 	Errors  []commitError `xml:"rpc-error"`
 }
 
+type okResult struct {
+	XMLName xml.Name `xml:"ok"`
+}
+
 type diffXML struct {
 	XMLName xml.Name `xml:"rollback-information"`
 	Error   string   `xml:"rpc-error>error-message"`
@@ -389,6 +393,7 @@ func (j *Junos) CommitHistory() (*CommitHistory, error) {
 // Commit commits the configuration.
 func (j *Junos) Commit() error {
 	var errs commitResults
+	var ok okResult
 	reply, err := j.Session.Exec(netconf.RawMethod(rpcCommit))
 	if err != nil {
 		return err
@@ -401,9 +406,15 @@ func (j *Junos) Commit() error {
 	}
 
 	formatted := strings.Replace(reply.Data, "\n", "", -1)
-	err = xml.Unmarshal([]byte(formatted), &errs)
-	if err != nil {
-		return err
+
+	// temporary code to make things work
+	okErr := xml.Unmarshal([]byte(formatted), &ok)
+
+	if okErr != nil {
+		err = xml.Unmarshal([]byte(formatted), &errs)
+		if err != nil {
+			return err
+		}
 	}
 
 	if errs.Errors != nil {
