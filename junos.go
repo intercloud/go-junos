@@ -469,6 +469,7 @@ func (j *Junos) CommitAt(time string, message ...string) error {
 // CommitCheck checks the configuration for syntax errors, but does not commit any changes.
 func (j *Junos) CommitCheck() error {
 	var errs commitResults
+	var ok okResult
 	reply, err := j.Session.Exec(netconf.RawMethod(rpcCommitCheck))
 	if err != nil {
 		return err
@@ -481,9 +482,14 @@ func (j *Junos) CommitCheck() error {
 	}
 
 	formatted := strings.Replace(reply.Data, "\n", "", -1)
-	err = xml.Unmarshal([]byte(formatted), &errs)
-	if err != nil {
-		return err
+	// temporary code to make things work
+	okErr := xml.Unmarshal([]byte(formatted), &ok)
+
+	if okErr != nil {
+		err = xml.Unmarshal([]byte(formatted), &errs)
+		if err != nil {
+			return err
+		}
 	}
 
 	if errs.Errors != nil {
