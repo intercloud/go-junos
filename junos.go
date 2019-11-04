@@ -498,6 +498,7 @@ func (j *Junos) CommitCheck() error {
 // CommitConfirm rolls back the configuration after the delayed minutes.
 func (j *Junos) CommitConfirm(delay int) error {
 	var errs commitResults
+	var ok okResult
 	command := fmt.Sprintf(rpcCommitConfirm, delay)
 	reply, err := j.Session.Exec(netconf.RawMethod(command))
 	if err != nil {
@@ -511,9 +512,14 @@ func (j *Junos) CommitConfirm(delay int) error {
 	}
 
 	formatted := strings.Replace(reply.Data, "\n", "", -1)
-	err = xml.Unmarshal([]byte(formatted), &errs)
-	if err != nil {
-		return err
+	// temporary code to make things work
+	okErr := xml.Unmarshal([]byte(formatted), &ok)
+
+	if okErr != nil {
+		err = xml.Unmarshal([]byte(formatted), &errs)
+		if err != nil {
+			return err
+		}
 	}
 
 	if errs.Errors != nil {
