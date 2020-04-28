@@ -614,6 +614,10 @@ func (j *Junos) GetConfig(format string, section ...string) (string, error) {
 		}
 	}
 
+	if strings.HasPrefix(reply.Data, "\n<configuration-set xmlns=") || strings.HasPrefix(reply.Data, "<configuration-set xmlns=") {
+		format = "text"
+	}
+
 	switch format {
 	case "text":
 		var output commandXML
