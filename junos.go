@@ -168,6 +168,11 @@ type versionPackageInfo struct {
 	SoftwareVersion []string `xml:"comment"`
 }
 
+// LoadConfigurationReply defines a special response
+type LoadConfigurationReply struct {
+	Errors []netconf.RPCError `xml:"load-configuration-results>rpc-error,omitempty"`
+}
+
 // genSSHClientConfig is a wrapper function based around the auth method defined
 // (user/password or private key) which returns the SSH client configuration used to
 // connect.
@@ -720,10 +725,24 @@ func (j *Junos) Config(path interface{}, format string, commit bool) error {
 		}
 	}
 
+	var msgErr string
+
 	if reply.Errors != nil {
-		for _, m := range reply.Errors {
-			return errors.New(m.Message)
+		for i := range reply.Errors {
+			msgErr += reply.Errors[i].Message + " "
 		}
+	}
+	confReply := LoadConfigurationReply{}
+	if err := xml.Unmarshal([]byte(reply.RawReply), &confReply); err != nil {
+		fmt.Println("error", err)
+	}
+	if confReply.Errors != nil {
+		for i := range confReply.Errors {
+			msgErr += confReply.Errors[i].Message + " "
+		}
+	}
+	if msgErr != "" {
+		return errors.New(msgErr)
 	}
 
 	return nil
