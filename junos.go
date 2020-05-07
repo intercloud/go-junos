@@ -3,6 +3,7 @@
 package junos
 
 import (
+	"bytes"
 	"encoding/xml"
 	"errors"
 	"fmt"
@@ -168,11 +169,6 @@ type versionPackageInfo struct {
 	SoftwareVersion []string `xml:"comment"`
 }
 
-// LoadConfigurationReply defines a special response
-type LoadConfigurationReply struct {
-	Errors []netconf.RPCError `xml:"load-configuration-results>rpc-error,omitempty"`
-}
-
 // genSSHClientConfig is a wrapper function based around the auth method defined
 // (user/password or private key) which returns the SSH client configuration used to
 // connect.
@@ -273,10 +269,9 @@ func (j *Junos) GatherFacts() error {
 		return err
 	}
 
-	if reply.Errors != nil {
-		for _, m := range reply.Errors {
-			return errors.New(m.Message)
-		}
+	err = readError(reply)
+	if err != nil {
+		return err
 	}
 
 	formatted := strings.Replace(reply.Data, "\n", "", -1)
@@ -345,10 +340,9 @@ func (j *Junos) Command(cmd string, format ...string) (string, error) {
 		return "", err
 	}
 
-	if reply.Errors != nil {
-		for _, m := range reply.Errors {
-			return "", errors.New(m.Message)
-		}
+	err = readError(reply)
+	if err != nil {
+		return "", err
 	}
 
 	if reply.Data == "" {
@@ -376,10 +370,9 @@ func (j *Junos) CommitHistory() (*CommitHistory, error) {
 		return nil, err
 	}
 
-	if reply.Errors != nil {
-		for _, m := range reply.Errors {
-			return nil, errors.New(m.Message)
-		}
+	err = readError(reply)
+	if err != nil {
+		return nil, err
 	}
 
 	if reply.Data == "" {
@@ -404,10 +397,9 @@ func (j *Junos) Commit() error {
 		return err
 	}
 
-	if reply.Errors != nil {
-		for _, m := range reply.Errors {
-			return errors.New(m.Message)
-		}
+	err = readError(reply)
+	if err != nil {
+		return err
 	}
 
 	formatted := strings.Replace(reply.Data, "\n", "", -1)
@@ -450,10 +442,9 @@ func (j *Junos) CommitAt(time string, message ...string) error {
 		return err
 	}
 
-	if reply.Errors != nil {
-		for _, m := range reply.Errors {
-			return errors.New(m.Message)
-		}
+	err = readError(reply)
+	if err != nil {
+		return err
 	}
 
 	formatted := strings.Replace(reply.Data, "\n", "", -1)
@@ -480,10 +471,9 @@ func (j *Junos) CommitCheck() error {
 		return err
 	}
 
-	if reply.Errors != nil {
-		for _, m := range reply.Errors {
-			return errors.New(m.Message)
-		}
+	err = readError(reply)
+	if err != nil {
+		return err
 	}
 
 	formatted := strings.Replace(reply.Data, "\n", "", -1)
@@ -516,10 +506,9 @@ func (j *Junos) CommitConfirm(delay int) error {
 		return err
 	}
 
-	if reply.Errors != nil {
-		for _, m := range reply.Errors {
-			return errors.New(m.Message)
-		}
+	err = readError(reply)
+	if err != nil {
+		return err
 	}
 
 	formatted := strings.Replace(reply.Data, "\n", "", -1)
@@ -556,10 +545,9 @@ func (j *Junos) Diff(rollback int) (string, error) {
 		return "", err
 	}
 
-	if reply.Errors != nil {
-		for _, m := range reply.Errors {
-			return "", errors.New(m.Message)
-		}
+	err = readError(reply)
+	if err != nil {
+		return "", err
 	}
 
 	// formatted := strings.Replace(reply.Data, "\n", "", -1)
@@ -613,10 +601,9 @@ func (j *Junos) GetConfig(format string, section ...string) (string, error) {
 		return "", errors.New("the section you provided is not configured on the device")
 	}
 
-	if reply.Errors != nil {
-		for _, m := range reply.Errors {
-			return "", errors.New(m.Message)
-		}
+	err = readError(reply)
+	if err != nil {
+		return "", err
 	}
 
 	if strings.HasPrefix(reply.Data, "\n<configuration-set xmlns=") || strings.HasPrefix(reply.Data, "<configuration-set xmlns=") {
@@ -642,6 +629,61 @@ func (j *Junos) GetConfig(format string, section ...string) (string, error) {
 	}
 
 	return reply.Data, nil
+}
+
+func readNestedErrors(xmlString string) ([]netconf.RPCError, error) {
+
+	decoder := xml.NewDecoder(bytes.NewReader([]byte(xmlString)))
+	errs := make([]netconf.RPCError, 0)
+	var inElement string
+	for {
+		// Read tokens from the XML document in a stream.
+		t, err := decoder.Token()
+		if err != nil && err.Error() != "EOF" {
+			return errs, err
+		}
+		if t == nil {
+			break
+		}
+		// Inspect the type of the token just read.
+		switch se := t.(type) {
+		case xml.StartElement:
+			// If we just read a StartElement token
+			inElement = se.Name.Local
+			// ...and its name is "page"
+			if inElement == "rpc-error" {
+				var e netconf.RPCError
+				// decode a whole chunk of following XML into the
+				// variable p which is a Page (se above)
+				err = decoder.DecodeElement(&e, &se)
+				if err != nil {
+					return errs, err
+				}
+				errs = append(errs, e)
+			}
+		default:
+		}
+
+	}
+	return errs, nil
+}
+
+// read error
+func readError(reply *netconf.RPCReply) error {
+	var msgErr string
+
+	errs, err := readNestedErrors(reply.RawReply)
+	if err != nil {
+		return errors.New("invalid rpc reply:" + reply.RawReply)
+	}
+	for i := range errs {
+		msgErr += errs[i].Type + "(" + errs[i].Severity + "):" + errs[i].Message + " "
+	}
+
+	if msgErr != "" {
+		return errors.New(msgErr)
+	}
+	return nil
 }
 
 // Config loads a given configuration file from your local machine,
@@ -725,27 +767,7 @@ func (j *Junos) Config(path interface{}, format string, commit bool) error {
 		}
 	}
 
-	var msgErr string
-
-	if reply.Errors != nil {
-		for i := range reply.Errors {
-			msgErr += reply.Errors[i].Message + " "
-		}
-	}
-	confReply := LoadConfigurationReply{}
-	if err := xml.Unmarshal([]byte(reply.RawReply), &confReply); err != nil {
-		fmt.Println("error", err)
-	}
-	if confReply.Errors != nil {
-		for i := range confReply.Errors {
-			msgErr += confReply.Errors[i].Message + " "
-		}
-	}
-	if msgErr != "" {
-		return errors.New(msgErr)
-	}
-
-	return nil
+	return readError(reply)
 }
 
 // Lock locks the candidate configuration.
@@ -755,10 +777,9 @@ func (j *Junos) Lock() error {
 		return err
 	}
 
-	if reply.Errors != nil {
-		for _, m := range reply.Errors {
-			return errors.New(m.Message)
-		}
+	err = readError(reply)
+	if err != nil {
+		return err
 	}
 
 	if j.CommitTimeout > 0 {
@@ -786,13 +807,7 @@ func (j *Junos) Rescue(action string) error {
 		return err
 	}
 
-	if reply.Errors != nil {
-		for _, m := range reply.Errors {
-			return errors.New(m.Message)
-		}
-	}
-
-	return nil
+	return readError(reply)
 }
 
 // Rollback loads and commits the configuration of a given rollback number or rescue state, by specifying "rescue."
@@ -813,10 +828,9 @@ func (j *Junos) Rollback(option interface{}) error {
 		return err
 	}
 
-	if reply.Errors != nil {
-		for _, m := range reply.Errors {
-			return errors.New(m.Message)
-		}
+	err = readError(reply)
+	if err != nil {
+		return err
 	}
 
 	return nil
@@ -829,10 +843,9 @@ func (j *Junos) Unlock() error {
 		return err
 	}
 
-	if reply.Errors != nil {
-		for _, m := range reply.Errors {
-			return errors.New(m.Message)
-		}
+	err = readError(reply)
+	if err != nil {
+		return err
 	}
 
 	if j.CommitTimeout > 0 {
@@ -849,10 +862,9 @@ func (j *Junos) Reboot() error {
 		return err
 	}
 
-	if reply.Errors != nil {
-		for _, m := range reply.Errors {
-			return errors.New(m.Message)
-		}
+	err = readError(reply)
+	if err != nil {
+		return err
 	}
 
 	return nil
@@ -867,10 +879,9 @@ func (j *Junos) CommitFull() error {
 		return err
 	}
 
-	if reply.Errors != nil {
-		for _, m := range reply.Errors {
-			return errors.New(m.Message)
-		}
+	err = readError(reply)
+	if err != nil {
+		return err
 	}
 
 	return nil
